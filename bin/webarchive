@@ -1,0 +1,78 @@
+#!/bin/bash
+# webarchive —— 把一份网页存档归入案卷并做证据锚定
+#
+# 用法:
+#   webarchive <html文件> <案卷目录> [说明]
+#   webarchive --latest  <案卷目录> [说明]   # 取 ~/Downloads 里最新的 .html(SingleFile 刚存的)
+#
+# 做四件事:
+#   1. 移入 <案卷>/_证据/webarchive/ 并按 UTC 时间戳命名
+#   2. 算 SHA-256
+#   3. ~/bin/stamp 打 RFC3161 双 TSA + OTS
+#   4. 追加一行到 <案卷>/_证据/anchors.jsonl（append-only 账本）
+#
+# 配套: SingleFile Chrome 扩展(能存登录态页面) 或 MCP 内 DOM 导出。
+# ⚠️ monolith/wget 抓不到登录后的页面——它们自己发请求,没有你的会话。
+set -uo pipefail
+
+SRC="${1:-}"; CASE="${2:-}"; NOTE="${3:-}"
+if [ "$SRC" = "--latest" ]; then
+  # 🔴 只接受 120 秒内落盘的文件——否则会静默抓到上一次的旧存档(2026-08-28 踩过)
+  SRC=$(find "$HOME/Downloads" -maxdepth 1 -name "*.html" -newermt "-120 seconds" 2>/dev/null \
+        | xargs -I{} stat -f "%m %N" {} 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+  if [ -z "$SRC" ]; then
+    echo "❌ ~/Downloads 里没有 120 秒内的新 .html"
+    echo "   → 存档可能未落盘(大文件的 Blob 下载会被拦)。请确认后用显式路径:"
+    echo "     webarchive <html文件> <案卷目录> \"说明\""
+    exit 1
+  fi
+  echo "📥 取最新: $(basename "$SRC")"
+fi
+[ -f "$SRC" ] || { echo "用法: webarchive <html文件|--latest> <案卷目录> [说明]"; exit 1; }
+[ -d "$CASE" ] || { echo "❌ 案卷目录不存在: $CASE"; exit 1; }
+
+DST="$CASE/_证据/webarchive"; mkdir -p "$DST"
+TS=$(date -u '+%Y%m%dT%H%M%SZ')
+BASE=$(basename "$SRC")
+OUT="$DST/${TS}__${BASE}"
+cp "$SRC" "$OUT"
+
+SHA=$(shasum -a 256 "$OUT" | cut -d' ' -f1)
+# 从存档头部提取原始 URL / 观察时间
+# 支持两种格式: ① MCP DOM 导出(自写头) ② SingleFile 扩展(" url: " / " saved date: ")
+URL=$(sed -n 's/^url: //p' "$OUT" | head -1)
+OBS=$(sed -n 's/^observedAt(UTC): //p' "$OUT" | head -1)
+if [ -z "$URL" ]; then
+  URL=$(head -c 2000 "$OUT" | tr '\r' '\n' | sed -n 's/^[[:space:]]*url:[[:space:]]*//p' | head -1 | sed 's/[[:space:]]*$//')
+fi
+if [ -z "$OBS" ]; then
+  OBS=$(head -c 2000 "$OUT" | tr '\r' '\n' | sed -n 's/^[[:space:]]*saved date:[[:space:]]*//p' | head -1 | sed 's/[[:space:]]*$//')
+fi
+TOOL=$(head -c 2000 "$OUT" | grep -q "Page saved with SingleFile" && echo "SingleFile" || echo "MCP-DOM-export")
+
+echo "📄 $(basename "$OUT")"
+echo "   sha256 $SHA"
+echo "   工具   $TOOL"
+[ -n "$URL" ] && echo "   url    $URL"
+[ -n "$OBS" ] && echo "   观察于 $OBS"
+
+echo "🔏 打时间戳…"
+~/bin/stamp "$OUT" || echo "   ⚠️ 时间戳未达 2/3，请复查网络"
+
+LEDGER="$CASE/_证据/anchors.jsonl"
+python3 - "$LEDGER" "$SHA" "$(basename "$OUT")" "$URL" "$OBS" "$NOTE" "$CASE" "$TOOL" <<'PY'
+import json,sys,subprocess,os
+ledger,sha,fname,url,obs,note,case,tool = sys.argv[1:9]
+try:
+    head = subprocess.check_output(['git','-C',case,'rev-parse','HEAD'],
+                                   stderr=subprocess.DEVNULL).decode().strip()
+except Exception:
+    head = None
+rec = {"type":"webarchive","file":fname,"sha256":sha,"url":url or None,
+       "observed_at":obs or None,"tool":tool,"note":note or None,"git_head":head,
+       "recorded_at":subprocess.check_output(['date','-u','+%Y-%m-%dT%H:%M:%SZ']).decode().strip()}
+with open(ledger,'a',encoding='utf-8') as f:
+    f.write(json.dumps(rec,ensure_ascii=False,sort_keys=True)+'\n')
+print(f"📒 已记入账本: {os.path.basename(ledger)}")
+PY
+echo "✅ 完成"

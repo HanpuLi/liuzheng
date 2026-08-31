@@ -1,0 +1,91 @@
+#!/bin/bash
+# stamp —— 给任意文件盖四重时间戳:FreeTSA + DigiCert + ai.moda(RFC3161)+ OpenTimestamps
+#
+# 用法:
+#   stamp <文件> [文件2 ...]      对文件本身盖戳
+#   stamp --dir <目录>            先生成逐文件 sha256 清单,再对清单盖戳(推荐用于目录)
+#
+# 产出:
+#   <file>.tsq                    RFC3161 请求
+#   <file>.freetsa.tsr            FreeTSA 响应
+#   <file>.digicert.tsr           DigiCert 响应
+#   <file>.aimoda.tsr             ai.moda 响应(轮换到 Sectigo/GlobalSign 等 AATL 级商业 CA)
+#   <file>.aimoda.chain.pem       ↑ 那一枚的证书链(含按 AIA 抓的上级证书)
+#
+# ⚠️ ai.moda 那枚**用 openssl 开箱验不了** —— 它链到 AATL(Adobe 信任列表)的根,
+#    而 AATL 根不在 Mozilla/OS 的通用 CA 库里。Adobe Acrobat 能验,命令行需手动信任该根。
+#    **可独立验证的那两层是 DigiCert(开箱 Verification: OK)与 FreeTSA(带自己的 cacert 即可)。**
+#    ai.moda 的价值是「多一个独立商业 CA 的时间源」,不是「更容易验证」。
+#   <file>.ots                    OpenTimestamps 证明
+#
+# ⚠️ OTS 盖完只是「日历收据」,要等几小时后 ots upgrade 才会嵌入比特币区块证明。
+#    ~/bin/ots-upgrade-sweep.sh(每天 09:20)会自动收。
+set -uo pipefail
+OTS="$HOME/Library/Python/3.9/bin/ots"
+TSA_FREE="https://freetsa.org/tsr"
+TSA_DIGI="http://timestamp.digicert.com"
+# 🔴 2026-08-30 新增第三家。ai.moda 是**负载均衡器**,会轮到不同的商业 CA ——
+# 实测同一周内两次分别轮到 Sectigo(OID 1.3.6.1.4.1.6449.2.1.1)
+# 与 GlobalSign AATL(OID 1.3.6.1.4.1.4146.1.31)。两家都是 AATL 级,
+# 证据力高于 freetsa 那种社区 TSA。**别假设它固定是哪家** —— 验证时看 .tsr 里嵌的证书。
+TSA_MODA="http://rfc3161.ai.moda"
+
+stamp_one() {
+  local f="$1" n=0
+  [ -f "$f" ] || { echo "  ❌ 不是文件: $f"; return 1; }
+  openssl ts -query -data "$f" -no_nonce -sha256 -cert -out "$f.tsq" 2>/dev/null \
+    || { echo "  ❌ 生成 tsq 失败: $(basename "$f")"; return 1; }
+  curl -fsS --max-time 30 -H "Content-Type: application/timestamp-query" \
+       --data-binary @"$f.tsq" "$TSA_FREE" -o "$f.freetsa.tsr" 2>/dev/null \
+    && n=$((n+1)) || rm -f "$f.freetsa.tsr"
+  curl -fsS --max-time 30 -H "Content-Type: application/timestamp-query" \
+       --data-binary @"$f.tsq" "$TSA_DIGI" -o "$f.digicert.tsr" 2>/dev/null \
+    && n=$((n+1)) || rm -f "$f.digicert.tsr"
+  if curl -fsS --max-time 30 -H "Content-Type: application/timestamp-query" \
+       --data-binary @"$f.tsq" "$TSA_MODA" -o "$f.aimoda.tsr" 2>/dev/null; then
+    n=$((n+1))
+    # 🔴 把证书链一并存下:ai.moda 轮换 CA(Sectigo/GlobalSign…),且这些是 AATL 级根,
+    # **不在 openssl 的通用信任库里**。将来要验证时中间证书可能已换地址,现在不存就再也拿不到。
+    ( tk=$(mktemp); ch="$f.aimoda.chain.pem"
+      if openssl ts -reply -in "$f.aimoda.tsr" -token_out -out "$tk" 2>/dev/null \
+         && openssl pkcs7 -inform DER -in "$tk" -print_certs -out "$ch" 2>/dev/null; then
+        # 顺着签名证书的 AIA(CA Issuers)把上级证书也抓下来,最多追 3 层
+        for _ in 1 2 3; do
+          aia=$(openssl x509 -in "$ch" -noout -text 2>/dev/null \
+                | grep -oE 'CA Issuers - URI:http://[^ ]+' | head -1 | sed 's/.*URI://')
+          [ -n "$aia" ] || break
+          grep -q "$(basename "$aia")" "$ch.sources" 2>/dev/null && break
+          tmp=$(mktemp)
+          curl -fsS --max-time 15 -o "$tmp" "$aia" 2>/dev/null || break
+          openssl x509 -inform DER -in "$tmp" -out "$tmp.pem" 2>/dev/null \
+            || cp "$tmp" "$tmp.pem"
+          cat "$tmp.pem" >> "$ch"; echo "$aia" >> "$ch.sources"
+          rm -f "$tmp" "$tmp.pem"
+        done
+      fi
+      rm -f "$tk" ) 2>/dev/null
+  else
+    rm -f "$f.aimoda.tsr"
+  fi
+  [ -x "$OTS" ] && "$OTS" stamp "$f" >/dev/null 2>&1 && n=$((n+1))
+  local sha; sha=$(shasum -a 256 "$f" | cut -d' ' -f1)
+  printf "  %s  %s  %d/4 个时间戳\n" "$([ "$n" -ge 3 ] && echo ✅ || echo ⚠️ )" "$(basename "$f")" "$n"
+  echo "     sha256 $sha"
+  [ "$n" -ge 2 ]
+}
+
+if [ "${1:-}" = "--dir" ]; then
+  d="${2:-}"; [ -d "$d" ] || { echo "用法: stamp --dir <目录>"; exit 1; }
+  ts=$(date '+%Y-%m-%d_%H%M')
+  mf="$(dirname "$d")/$(basename "$d")_${ts}.manifest.sha256"
+  ( cd "$(dirname "$d")" && find "$(basename "$d")" -type f ! -name '.DS_Store' -print0 2>/dev/null \
+      | xargs -0 shasum -a 256 2>/dev/null ) | sort -k2 > "$mf"
+  echo "清单: $mf($(wc -l < "$mf" | tr -d ' ') 个文件)"
+  stamp_one "$mf"
+  exit $?
+fi
+
+[ $# -ge 1 ] || { echo "用法: stamp <文件>... | stamp --dir <目录>"; exit 1; }
+rc=0
+for f in "$@"; do stamp_one "$f" || rc=1; done
+exit $rc
