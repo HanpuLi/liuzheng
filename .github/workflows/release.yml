@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Tag/version guard
+        run: |
+          test "v$(tr -d '[:space:]' < VERSION)" = "$GITHUB_REF_NAME"
+      - name: Syntax
+        run: |
+          python -m py_compile bin/gmail-eml
+          bash -n bin/stamp bin/webarchive bin/ots-upgrade-sweep.sh tests/test-webarchive.sh tests/test-stamp.sh
+      - name: Unit and regression tests
+        run: |
+          python -m unittest discover -s tests -p 'test_*.py' -v
+          bash tests/test-webarchive.sh
+          bash tests/test-stamp.sh
+
+  github-release:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Create source release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME"             --repo "$GITHUB_REPOSITORY"             --verify-tag             --title "留证 $GITHUB_REF_NAME"             --generate-notes
