@@ -52,11 +52,34 @@ timestamp="$(date -u '+%Y%m%dT%H%M%SZ')"
 conflicts=0
 
 same_file() {
-  [ -f "$1" ] && cmp -s "$1" "$2"
+  [ -f "$1" ] && [ ! -L "$1" ] && cmp -s "$1" "$2"
 }
 
 same_dir() {
-  [ -d "$1" ] && diff -qr "$1" "$2" >/dev/null 2>&1
+  [ -d "$1" ] && [ ! -L "$1" ] && diff -qr "$1" "$2" >/dev/null 2>&1
+}
+
+next_backup_path() {
+  local src="$1" base candidate n
+  base="$src.bak.$timestamp"
+  candidate="$base"
+  n=1
+  while [ -e "$candidate" ] || [ -L "$candidate" ]; do
+    candidate="$base.$n"
+    n=$((n + 1))
+  done
+  printf '%s\n' "$candidate"
+}
+
+backup_existing() {
+  local src="$1" backup="$2"
+  if [ -L "$src" ]; then
+    cp -P "$src" "$backup"
+  elif [ -d "$src" ]; then
+    cp -Rp "$src" "$backup"
+  else
+    cp -p "$src" "$backup"
+  fi
 }
 
 echo "liuzheng install preflight"
@@ -119,8 +142,9 @@ for name in "${TOOLS[@]}"; do
   fi
 
   if [ -e "$dst" ] || [ -L "$dst" ]; then
-    backup="$dst.bak.$timestamp"
-    cp -pP "$dst" "$backup"
+    backup="$(next_backup_path "$dst")"
+    backup_existing "$dst" "$backup"
+    rm -rf -- "$dst"
     echo "backup: $backup"
   fi
 
@@ -143,15 +167,17 @@ if [ "$INSTALL_SKILLS" -eq 1 ]; then
     fi
 
     if [ -e "$dst" ] || [ -L "$dst" ]; then
-      backup="$dst.bak.$timestamp"
-      cp -RPp "$dst" "$backup"
-      rm -rf "$dst"
+      backup="$(next_backup_path "$dst")"
+      backup_existing "$dst" "$backup"
+      rm -rf -- "$dst"
       echo "backup: $backup"
     fi
 
     tmpdir="$(mktemp -d "$SKILLS_DIR/.liuzheng-$name.XXXXXX")"
+    trap 'rm -rf "$tmpdir"' EXIT
     cp -Rp "$src/." "$tmpdir/"
     mv "$tmpdir" "$dst"
+    trap - EXIT
     echo "installed: $dst"
   done
 fi
