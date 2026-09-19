@@ -63,10 +63,10 @@
 
 ## 安装
 
-当前稳定版本是 **v0.1.1**。需要可复现安装时固定到 release tag：
+当前稳定版本是 **v0.1.2**。需要可复现安装时固定到 release tag：
 
 ```bash
-git clone --branch v0.1.1 --depth 1 https://github.com/HanpuLi/liuzheng.git
+git clone --branch v0.1.2 --depth 1 https://github.com/HanpuLi/liuzheng.git
 cd liuzheng
 
 # 只安装四个 CLI 到 ~/bin；不会覆盖不同的已有文件

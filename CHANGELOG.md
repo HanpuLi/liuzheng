@@ -2,6 +2,15 @@
 
 All notable public changes are recorded here.
 
+## [0.1.2] - 2026-09-19
+
+Installer replacement-safety hardening.
+
+- Treat destination symlinks as conflicts instead of accepting the symlink target's contents as an installed file.
+- Make `--force` back up and replace unexpected destination files/directories safely instead of failing after earlier tools may already have been installed.
+- Generate collision-free backup names for repeated forced installs within the same second.
+- Clean temporary skill directories on failed copies and add regression coverage for directory replacement plus symlink-target preservation.
+
 ## [0.1.1] - 2026-09-19
 
 Installation and contributor UX hardening.
