@@ -21,7 +21,8 @@
 # ⚠️ OTS 盖完只是「日历收据」,要等几小时后 ots upgrade 才会嵌入比特币区块证明。
 #    ~/bin/ots-upgrade-sweep.sh(每天 09:20)会自动收。
 set -uo pipefail
-OTS="$HOME/Library/Python/3.9/bin/ots"
+OTS="${LIUZHENG_OTS_BIN:-$(command -v ots 2>/dev/null || true)}"
+[ -n "$OTS" ] || OTS="$HOME/Library/Python/3.9/bin/ots"
 TSA_FREE="https://freetsa.org/tsr"
 TSA_DIGI="http://timestamp.digicert.com"
 # 🔴 2026-08-30 新增第三家。ai.moda 是**负载均衡器**,会轮到不同的商业 CA ——
@@ -30,19 +31,26 @@ TSA_DIGI="http://timestamp.digicert.com"
 # 证据力高于 freetsa 那种社区 TSA。**别假设它固定是哪家** —— 验证时看 .tsr 里嵌的证书。
 TSA_MODA="http://rfc3161.ai.moda"
 
+fetch_tsr() {
+  local url="$1" out="$2"
+  if curl -fsS --max-time 30 -H "Content-Type: application/timestamp-query" \
+       --data-binary @"$CURRENT_TSQ" "$url" -o "$out" 2>/dev/null \
+     && openssl ts -reply -in "$out" -text >/dev/null 2>&1; then
+    return 0
+  fi
+  rm -f "$out"
+  return 1
+}
+
 stamp_one() {
   local f="$1" n=0
   [ -f "$f" ] || { echo "  ❌ 不是文件: $f"; return 1; }
   openssl ts -query -data "$f" -no_nonce -sha256 -cert -out "$f.tsq" 2>/dev/null \
     || { echo "  ❌ 生成 tsq 失败: $(basename "$f")"; return 1; }
-  curl -fsS --max-time 30 -H "Content-Type: application/timestamp-query" \
-       --data-binary @"$f.tsq" "$TSA_FREE" -o "$f.freetsa.tsr" 2>/dev/null \
-    && n=$((n+1)) || rm -f "$f.freetsa.tsr"
-  curl -fsS --max-time 30 -H "Content-Type: application/timestamp-query" \
-       --data-binary @"$f.tsq" "$TSA_DIGI" -o "$f.digicert.tsr" 2>/dev/null \
-    && n=$((n+1)) || rm -f "$f.digicert.tsr"
-  if curl -fsS --max-time 30 -H "Content-Type: application/timestamp-query" \
-       --data-binary @"$f.tsq" "$TSA_MODA" -o "$f.aimoda.tsr" 2>/dev/null; then
+  CURRENT_TSQ="$f.tsq"
+  fetch_tsr "$TSA_FREE" "$f.freetsa.tsr" && n=$((n+1))
+  fetch_tsr "$TSA_DIGI" "$f.digicert.tsr" && n=$((n+1))
+  if fetch_tsr "$TSA_MODA" "$f.aimoda.tsr"; then
     n=$((n+1))
     # 🔴 把证书链一并存下:ai.moda 轮换 CA(Sectigo/GlobalSign…),且这些是 AATL 级根,
     # **不在 openssl 的通用信任库里**。将来要验证时中间证书可能已换地址,现在不存就再也拿不到。

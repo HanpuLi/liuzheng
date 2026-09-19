@@ -1,111 +1,199 @@
 #!/usr/bin/env python3
-"""gmail-eml —— 把 Gmail 邮件导出成带 DKIM 的 .eml 原件
+"""gmail-eml —— 把 Gmail 邮件导出成带 DKIM 的 .eml 原件。
 
-为什么需要它:
-  Gmail 网页版对「已发送」邮件的「下载原始邮件」给的是你撰写的那份,
-  DKIM / Authentication-Results / Received 全为空。DKIM 只存在于**收件方**副本里。
-  MCP 的 read_email 给的是解析后的文本,也不是原件。
-  本脚本走 Gmail API messages.get(format=raw),拿到的是真正的 RFC822 字节。
+Gmail 网页版的「已发送」副本通常没有收件链路上的 DKIM / Received 头。
+这个工具复用本机 Gmail MCP 已授权的 OAuth 凭证，通过 Gmail API
+messages.get(format=raw) 导出收件方真正持有的 RFC822 字节。
 
-用法:
-  gmail-eml --account default --query "in:sent newer_than:1d" --dest 目录
-  gmail-eml --account work    --id 1a0527c5b7aed2af  --dest 目录 [--name 文件名.eml]
-  gmail-eml --account default --id <ID> --check      # 只核验不落盘
-
-  账号名对应 ~/.gmail-mcp/credentials-<账号名>.json;主账号用 default
-  (即 ~/.gmail-mcp/credentials.json)。多账号是本工具的关键用法——
-  DKIM 只在**收件方**副本里,所以要从「收到你那封信的那个账号」导出。
-
-凭证: ~/.gmail-mcp/{credentials.json | credentials-<account>.json} + gcp-oauth.keys.json
-      (Gmail MCP 服务器已经授权好的 OAuth token,直接复用)
+凭证只从 ~/.gmail-mcp 读取，不写入本仓库。
 """
-import json, base64, urllib.request, urllib.parse, os, sys, re, argparse, email
+from __future__ import annotations
+
+import argparse
+import base64
+import email
+import json
+import os
+import re
+import sys
+import urllib.parse
+import urllib.request
 from email.header import decode_header, make_header
+from pathlib import Path
 
-HOME = os.path.expanduser('~')
-MCP  = f'{HOME}/.gmail-mcp'
+HOME = Path.home()
+MCP = HOME / ".gmail-mcp"
+ACCOUNT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
+MESSAGE_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
+HTTP_TIMEOUT = 30
 
-def cred_path(account):
-    p = f'{MCP}/credentials.json' if account == 'default' \
-        else f'{MCP}/credentials-{account}.json'
-    if not os.path.exists(p):
-        sys.exit(f"找不到凭证: {p}\n现有: {[f for f in os.listdir(MCP) if f.startswith('credentials')]}")
-    return p
 
-def token(account):
-    keys = json.load(open(f'{MCP}/gcp-oauth.keys.json'))['installed']
-    c = json.load(open(cred_path(account)))
+def validate_account(account: str) -> str:
+    if account == "default":
+        return account
+    if account in {".", ".."} or not ACCOUNT_RE.fullmatch(account):
+        raise ValueError("account 只能包含字母、数字、点、下划线和连字符，且不能包含路径分隔符")
+    return account
+
+
+def validate_message_id(message_id: str) -> str:
+    if not MESSAGE_ID_RE.fullmatch(message_id):
+        raise ValueError(f"非法 Gmail message id: {message_id!r}")
+    return message_id
+
+
+def explicit_output_name(name: str) -> str:
+    if not name or name in {".", ".."} or Path(name).name != name or any(ord(ch) < 32 for ch in name):
+        raise ValueError("--name 必须是单个文件名，不能包含路径或控制字符")
+    return name
+
+
+def cred_path(account: str) -> Path:
+    validate_account(account)
+    path = MCP / ("credentials.json" if account == "default" else f"credentials-{account}.json")
+    if not path.exists():
+        existing = sorted(p.name for p in MCP.glob("credentials*.json")) if MCP.is_dir() else []
+        raise FileNotFoundError(f"找不到凭证: {path}\n现有: {existing}")
+    return path
+
+
+def _read_json(path: Path) -> dict:
+    with path.open(encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def token(account: str) -> str:
+    keys = _read_json(MCP / "gcp-oauth.keys.json")["installed"]
+    credentials = _read_json(cred_path(account))
     data = urllib.parse.urlencode({
-        'client_id': keys['client_id'], 'client_secret': keys['client_secret'],
-        'refresh_token': c['refresh_token'], 'grant_type': 'refresh_token'}).encode()
-    req = urllib.request.Request('https://oauth2.googleapis.com/token', data=data,
-                                 headers={'Content-Type': 'application/x-www-form-urlencoded'})
-    return json.load(urllib.request.urlopen(req))['access_token']
+        "client_id": keys["client_id"],
+        "client_secret": keys["client_secret"],
+        "refresh_token": credentials["refresh_token"],
+        "grant_type": "refresh_token",
+    }).encode()
+    req = urllib.request.Request(
+        "https://oauth2.googleapis.com/token",
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as response:
+        return json.load(response)["access_token"]
 
-def api(tok, path):
-    req = urllib.request.Request(f'https://gmail.googleapis.com/gmail/v1/users/me/{path}',
-                                 headers={'Authorization': f'Bearer {tok}'})
-    return json.load(urllib.request.urlopen(req))
 
-def raw(tok, mid):
-    return base64.urlsafe_b64decode(api(tok, f'messages/{mid}?format=raw')['raw'])
+def api(tok: str, path: str) -> dict:
+    req = urllib.request.Request(
+        f"https://gmail.googleapis.com/gmail/v1/users/me/{path}",
+        headers={"Authorization": f"Bearer {tok}"},
+    )
+    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as response:
+        return json.load(response)
 
-def decode_subject(v):
-    if not v: return ''
-    try: return str(make_header(decode_header(v)))[:60]
-    except Exception: return v[:60]
 
-def inspect(data):
-    """核验证据力。⚠️ 必须解析完整头部——Gmail 把 ARC 头排在 DKIM-Signature 之前,
-       只读前几 KB 会误判成「没有 DKIM」(2026-08-30 踩过)。"""
-    m = email.message_from_bytes(data)
-    ar = ' '.join(m.get_all('Authentication-Results') or [])
+def raw(tok: str, message_id: str) -> bytes:
+    message_id = validate_message_id(message_id)
+    quoted = urllib.parse.quote(message_id, safe="")
+    encoded = api(tok, f"messages/{quoted}?format=raw")["raw"]
+    encoded += "=" * (-len(encoded) % 4)
+    return base64.urlsafe_b64decode(encoded)
+
+
+def decode_subject(value: str | None) -> str:
+    if not value:
+        return ""
+    try:
+        return str(make_header(decode_header(value)))[:60]
+    except Exception:
+        return value[:60]
+
+
+def inspect(data: bytes) -> dict:
+    """解析完整头部；不要用前几 KB 猜 DKIM 是否存在。"""
+    message = email.message_from_bytes(data)
+    auth_results = " ".join(message.get_all("Authentication-Results") or [])
     return {
-        'dkim_sig': 'DKIM-Signature' in m,
-        'dkim':     'pass' if 'dkim=pass' in ar else ('fail' if 'dkim=' in ar else '—'),
-        'spf':      'pass' if 'spf=pass' in ar else '—',
-        'received': len(m.get_all('Received') or []),
-        'attach':   sum(1 for p in m.walk() if p.get_filename()),
-        'subject':  decode_subject(m.get('Subject')),
-        'date':     m.get('Date', ''),
+        "dkim_sig": "DKIM-Signature" in message,
+        "dkim": "pass" if "dkim=pass" in auth_results else ("fail" if "dkim=" in auth_results else "—"),
+        "spf": "pass" if "spf=pass" in auth_results else "—",
+        "received": len(message.get_all("Received") or []),
+        "attach": sum(1 for part in message.walk() if part.get_filename()),
+        "subject": decode_subject(message.get("Subject")),
+        "date": message.get("Date", ""),
     }
 
-def safe(s, n=48):
-    s = re.sub(r'[/\\:\x00-\x1f]', '_', s or '')
-    return re.sub(r'\s+', '_', s).strip('_')[:n]
 
-ap = argparse.ArgumentParser()
-ap.add_argument('--account', required=True, help='default | <账号名>(见 ~/.gmail-mcp/)')
-ap.add_argument('--id', action='append', default=[], help='message id(可重复)')
-ap.add_argument('--query', help='Gmail 搜索式,批量导出')
-ap.add_argument('--dest', help='落盘目录')
-ap.add_argument('--name', help='单封时指定文件名')
-ap.add_argument('--prefix', default='', help='批量时的文件名前缀,如 我方发出_对方名_2026-08-30')
-ap.add_argument('--max', type=int, default=50)
-ap.add_argument('--check', action='store_true', help='只核验不落盘')
-a = ap.parse_args()
+def safe(value: str, limit: int = 48) -> str:
+    value = re.sub(r"[/\\:\x00-\x1f]", "_", value or "")
+    return re.sub(r"\s+", "_", value).strip("_")[:limit]
 
-tok = token(a.account)
-ids = list(a.id)
-if a.query:
-    r = api(tok, 'messages?' + urllib.parse.urlencode({'q': a.query, 'maxResults': a.max}))
-    ids += [m['id'] for m in r.get('messages', [])]
-if not ids:
-    sys.exit('没有匹配的邮件')
 
-print(f"{'DKIM签名':8} {'dkim=':6} {'spf=':5} {'Rcvd':4} {'附件':4}  主题 / 落盘")
-ok = 0
-for mid in ids:
-    data = raw(tok, mid)
-    i = inspect(data)
-    line = f"{'✓' if i['dkim_sig'] else '—':8} {i['dkim']:6} {i['spf']:5} {i['received']:<4} {i['attach'] or '':<4}  {i['subject']}"
-    if a.check or not a.dest:
-        print(line)
-    else:
-        os.makedirs(a.dest, exist_ok=True)
-        fn = a.name if (a.name and len(ids) == 1) else \
-             f"{a.prefix + '_' if a.prefix else ''}{safe(i['subject'])}_{mid[:8]}.eml"
-        open(os.path.join(a.dest, fn), 'wb').write(data)
-        print(line + f"\n{'':32}→ {fn}  ({len(data)} bytes)")
-    ok += 1
-print(f"\n共 {ok} 封。⚠️ 落盘后记得 stamp 对 manifest 盖戳(见 skills/luodang)。")
+def parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--account", required=True, help="default | <账号名>(见 ~/.gmail-mcp/)")
+    ap.add_argument("--id", action="append", default=[], help="message id(可重复)")
+    ap.add_argument("--query", help="Gmail 搜索式,批量导出")
+    ap.add_argument("--dest", help="落盘目录")
+    ap.add_argument("--name", help="单封时指定文件名")
+    ap.add_argument("--prefix", default="", help="批量时的文件名前缀")
+    ap.add_argument("--max", type=int, default=50)
+    ap.add_argument("--check", action="store_true", help="只核验不落盘")
+    return ap
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = parser()
+    args = ap.parse_args(argv)
+    try:
+        validate_account(args.account)
+        ids = [validate_message_id(mid) for mid in args.id]
+        if args.name:
+            explicit_output_name(args.name)
+    except ValueError as exc:
+        ap.error(str(exc))
+    if not 1 <= args.max <= 500:
+        ap.error("--max 必须在 1..500")
+
+    try:
+        tok = token(args.account)
+    except (OSError, KeyError, json.JSONDecodeError) as exc:
+        raise SystemExit(str(exc)) from exc
+
+    if args.query:
+        result = api(tok, "messages?" + urllib.parse.urlencode({"q": args.query, "maxResults": args.max}))
+        ids.extend(validate_message_id(item["id"]) for item in result.get("messages", []))
+    if not ids:
+        raise SystemExit("没有匹配的邮件")
+
+    print(f"{'DKIM签名':8} {'dkim=':6} {'spf=':5} {'Rcvd':4} {'附件':4}  主题 / 落盘")
+    exported = 0
+    for mid in ids:
+        data = raw(tok, mid)
+        info = inspect(data)
+        line = (
+            f"{'✓' if info['dkim_sig'] else '—':8} {info['dkim']:6} {info['spf']:5} "
+            f"{info['received']:<4} {info['attach'] or '':<4}  {info['subject']}"
+        )
+        if args.check or not args.dest:
+            print(line)
+        else:
+            dest = Path(args.dest).expanduser()
+            dest.mkdir(parents=True, exist_ok=True)
+            filename = (
+                args.name
+                if args.name and len(ids) == 1
+                else f"{args.prefix + '_' if args.prefix else ''}{safe(info['subject'])}_{mid[:8]}.eml"
+            )
+            out = dest / filename
+            try:
+                with out.open("xb") as fh:
+                    fh.write(data)
+                os.chmod(out, 0o600)
+            except FileExistsError as exc:
+                raise SystemExit(f"拒绝覆盖已有证据文件: {out}") from exc
+            print(line + f"\n{'':32}→ {filename}  ({len(data)} bytes)")
+        exported += 1
+    print(f"\n共 {exported} 封。⚠️ 落盘后记得 stamp 对 manifest 盖戳(见 skills/luodang)。")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

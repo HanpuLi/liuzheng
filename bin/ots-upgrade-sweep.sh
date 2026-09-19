@@ -9,7 +9,8 @@
 #
 # 盖戳后需要等日历确认(通常几小时),所以这个脚本每天跑,把新的 pending 收掉。
 set -uo pipefail
-OTS="$HOME/Library/Python/3.9/bin/ots"
+OTS="${LIUZHENG_OTS_BIN:-$(command -v ots 2>/dev/null || true)}"
+[ -n "$OTS" ] || OTS="$HOME/Library/Python/3.9/bin/ots"
 RNOTIFY="$HOME/bin/rnotify"   # 可选:你自己的推送通知脚本,不存在则跳过
 LOG="$HOME/.ots_sweep.log"
 [ -x "$OTS" ] || { echo "$(date '+%F %T') ots 命令不存在: $OTS" >> "$LOG"; exit 0; }
@@ -31,6 +32,10 @@ else
   )
 fi
 
+file_mtime() {
+  stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || date +%s
+}
+
 tot=0; conf=0; pend=0; old_pend=0
 NOW=$(date +%s)
 while IFS= read -r f; do
@@ -42,7 +47,7 @@ while IFS= read -r f; do
     conf=$((conf+1))
   else
     pend=$((pend+1))
-    age=$(( (NOW - $(stat -f %m "$f" 2>/dev/null || echo "$NOW")) / 3600 ))
+    age=$(( (NOW - $(file_mtime "$f")) / 3600 ))
     [ "$age" -gt 72 ] && old_pend=$((old_pend+1))
   fi
 done < <(find "${ROOTS[@]}" -name '*.ots' ! -name '*.bak' 2>/dev/null)

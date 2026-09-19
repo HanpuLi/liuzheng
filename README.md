@@ -1,5 +1,8 @@
 # 留证 · liuzheng
 
+[![CI](https://github.com/HanpuLi/liuzheng/actions/workflows/ci.yml/badge.svg)](https://github.com/HanpuLi/liuzheng/actions/workflows/ci.yml)
+[![Security](https://github.com/HanpuLi/liuzheng/actions/workflows/security.yml/badge.svg)](https://github.com/HanpuLi/liuzheng/actions/workflows/security.yml)
+
 **代个人跟机构打交道，并把每一次往来固定成经得起查的证据。**
 
 两个 Claude/Codex Agent Skill + 四个命令行工具。给的是**操作纪律**，不是文风模板：
@@ -55,6 +58,8 @@
 | `stamp` | 四重盖戳：FreeTSA + DigiCert + ai.moda（RFC3161）+ OpenTimestamps；自动抓存 ai.moda 的证书链 |
 | `webarchive` | 网页存档归入案卷 → SHA-256 → 盖戳 → 追加 append-only 账本（`anchors.jsonl`） |
 | `ots-upgrade-sweep.sh` | 定时把 OTS 日历收据升级成自包含的比特币证明，超 72h 未锚定报警 |
+
+这些工具现在默认按证据软件的方式 **fail closed**：`gmail-eml` 的账号/message-id/输出文件名不能逃出预期路径，导出的 `.eml` 是 `0600` 且不覆盖已有文件；`webarchive` 用 UTC 时间 + 内容哈希命名并拒绝碰撞；`stamp` 只有在响应能被 OpenSSL 解析为 RFC3161 时间戳时才计入层数。完整信任链验证仍按 [安装与验证文档](docs/install.md) 单独完成。
 
 ## 安装
 

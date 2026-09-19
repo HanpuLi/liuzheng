@@ -12,14 +12,15 @@
 
 ## `ots` 路径
 
-`stamp` 和 `ots-upgrade-sweep.sh` 里写死了 macOS 的 pip user 安装路径：
+`stamp` 和 `ots-upgrade-sweep.sh` 会先从 `PATH` 找 `ots`，再兼容旧的 macOS
+pip user 路径 `$HOME/Library/Python/3.9/bin/ots`。需要固定到其他位置时可显式指定：
 
 ```bash
-OTS="$HOME/Library/Python/3.9/bin/ots"
+export LIUZHENG_OTS_BIN=/absolute/path/to/ots
 ```
 
-装在别处就改这一行（`which ots` 看实际路径）。找不到时脚本会跳过 OTS 那一重，
-输出 3/4 而不是 4/4 —— **不会静默成功**。
+找不到可执行文件时，`stamp` 会跳过 OTS 那一重，输出少一层而不是伪装成成功；
+定时 upgrade 脚本则会把缺失写入日志后退出。
 
 ## `gmail-eml` 的凭证
 
@@ -91,6 +92,10 @@ Linux 用 cron：`20 9 * * * ~/bin/ots-upgrade-sweep.sh`
 想要报警就自己实现 `rnotify`（一个 curl 到 ntfy/Pushover 的壳就够）。
 
 ## 验证一次，确认装对了
+
+`stamp` 只有在下载结果能被 `openssl ts -reply` 解析为 RFC3161 响应时才会计入层数；
+单纯 HTTP 200、代理错误页或其他垃圾响应会被删除并按失败处理。这里显示的层数仍然只是
+“拿到可解析的时间戳响应”，**不是完整信任链验证**；承重验证仍按下面的命令逐枚做。
 
 ```bash
 echo "hello" > /tmp/t.txt
