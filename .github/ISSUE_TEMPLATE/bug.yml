@@ -1,0 +1,35 @@
+name: Bug report
+description: Report a reproducible defect in a skill or CLI tool
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not attach real case files, email exports, credentials or personal evidence. Reduce the problem to synthetic data where possible."
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - gmail-eml
+        - stamp
+        - webarchive
+        - ots-upgrade-sweep
+        - duiwai-goutong skill
+        - luodang skill
+        - installer / CI
+        - documentation
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Include the command/step, expected result and actual result.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python/OpenSSL/OTS versions where relevant. Do not include usernames, paths containing personal names, or credentials.
