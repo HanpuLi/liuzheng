@@ -27,10 +27,21 @@ jobs:
       - name: Syntax
         run: |
           python -m py_compile bin/gmail-eml
-          bash -n bin/stamp bin/webarchive bin/ots-upgrade-sweep.sh tests/test-webarchive.sh tests/test-stamp.sh
+          bash -n bin/stamp bin/webarchive bin/ots-upgrade-sweep.sh scripts/install.sh tests/test-webarchive.sh tests/test-stamp.sh tests/test-install.sh
+      - name: Release metadata
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          version = Path("VERSION").read_text().strip()
+          citation = Path("CITATION.cff").read_text()
+          assert f'version: "{version}"' in citation
+          print("metadata version", version)
+          PY
       - name: Unit tests
         run: python -m unittest discover -s tests -p 'test_*.py' -v
       - name: Evidence-tool regression tests
         run: |
           bash tests/test-webarchive.sh
           bash tests/test-stamp.sh
+      - name: Installer regression tests
+        run: bash tests/test-install.sh

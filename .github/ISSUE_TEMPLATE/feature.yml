@@ -1,0 +1,23 @@
+name: Feature request
+description: Propose a narrowly scoped improvement
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Evidence or workflow problem
+      description: What failure mode or manual step would this address?
+    validations:
+      required: true
+  - type: textarea
+    id: boundary
+    attributes:
+      label: Safety / evidence boundary
+      description: Explain how the change avoids silent overwrite, over-collection or weakening provenance.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed approach

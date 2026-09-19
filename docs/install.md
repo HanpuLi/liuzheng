@@ -1,5 +1,27 @@
 # 安装与配置
 
+## 推荐安装
+
+从 release tag 克隆后使用仓库自带 installer。默认只复制四个 CLI 到 `~/bin`，不会碰同名但内容不同的已有文件：
+
+```bash
+./scripts/install.sh
+```
+
+同时安装 Claude Code skills：
+
+```bash
+./scripts/install.sh --with-claude-skills
+```
+
+自定义目录：
+
+```bash
+./scripts/install.sh --bin-dir "$HOME/.local/bin" --skills-dir "$HOME/.claude/skills"
+```
+
+遇到不同的已有文件/目录时 installer 会在任何写入前整体退出。只有显式使用 `--force` 才替换，并先创建 `.bak.<UTC时间戳>` 备份。installer 本身不联网、不改 shell profile，也不自动配置 Gmail OAuth 或定时任务。
+
 ## 依赖
 
 | 依赖 | 用途 | 装法 |

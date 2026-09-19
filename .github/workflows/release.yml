@@ -22,15 +22,22 @@ jobs:
       - name: Tag/version guard
         run: |
           test "v$(tr -d '[:space:]' < VERSION)" = "$GITHUB_REF_NAME"
+          python - <<'PY'
+          from pathlib import Path
+          version = Path("VERSION").read_text().strip()
+          citation = Path("CITATION.cff").read_text()
+          assert f'version: "{version}"' in citation
+          PY
       - name: Syntax
         run: |
           python -m py_compile bin/gmail-eml
-          bash -n bin/stamp bin/webarchive bin/ots-upgrade-sweep.sh tests/test-webarchive.sh tests/test-stamp.sh
+          bash -n bin/stamp bin/webarchive bin/ots-upgrade-sweep.sh scripts/install.sh tests/test-webarchive.sh tests/test-stamp.sh tests/test-install.sh
       - name: Unit and regression tests
         run: |
           python -m unittest discover -s tests -p 'test_*.py' -v
           bash tests/test-webarchive.sh
           bash tests/test-stamp.sh
+          bash tests/test-install.sh
 
   github-release:
     needs: validate
