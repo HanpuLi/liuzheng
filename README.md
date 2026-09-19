@@ -63,8 +63,10 @@
 
 ## 安装
 
+当前稳定版本是 **v0.1.0**。需要可复现安装时固定到 release tag：
+
 ```bash
-git clone https://github.com/HanpuLi/liuzheng.git
+git clone --branch v0.1.0 --depth 1 https://github.com/HanpuLi/liuzheng.git
 cd liuzheng
 
 # 1. skills（Claude Code 用户目录；Codex/Cursor 路径自行对应）
@@ -74,7 +76,7 @@ cp -r skills/duiwai-goutong skills/luodang ~/.claude/skills/
 cp bin/* ~/bin/ && chmod +x ~/bin/gmail-eml ~/bin/stamp ~/bin/webarchive ~/bin/ots-upgrade-sweep.sh
 ```
 
-依赖与配置见 [docs/install.md](docs/install.md)。
+开发/审计最新代码再使用 `main`。依赖与配置见 [docs/install.md](docs/install.md)，版本变化见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 出处
 
