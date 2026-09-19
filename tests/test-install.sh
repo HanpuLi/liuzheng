@@ -63,4 +63,31 @@ backup="$(find "$CONFLICT_BIN" -maxdepth 1 -name 'gmail-eml.bak.*' -print | head
 test -n "$backup"
 grep -q 'local custom tool' "$backup"
 
-echo "PASS installer fail-closed / idempotent / force-backup"
+# --force must also replace unexpected destination types without a partial install.
+TYPE_BIN="$TMP/type-bin"
+mkdir -p "$TYPE_BIN/stamp"
+printf 'keep me\n' > "$TYPE_BIN/stamp/preserved.txt"
+"$ROOT/scripts/install.sh" --bin-dir "$TYPE_BIN" --force >/dev/null
+test -x "$TYPE_BIN/stamp"
+test ! -d "$TYPE_BIN/stamp"
+stamp_backup="$(find "$TYPE_BIN" -maxdepth 1 -type d -name 'stamp.bak.*' -print | head -1)"
+test -n "$stamp_backup"
+grep -q 'keep me' "$stamp_backup/preserved.txt"
+for name in gmail-eml stamp webarchive ots-upgrade-sweep.sh; do
+  test -x "$TYPE_BIN/$name"
+done
+
+# A destination symlink is treated as a conflict, backed up as a symlink, and replaced
+# without modifying the symlink target.
+SYMLINK_BIN="$TMP/symlink-bin"
+mkdir -p "$SYMLINK_BIN"
+printf 'external custom tool\n' > "$TMP/external-gmail-eml"
+ln -s "$TMP/external-gmail-eml" "$SYMLINK_BIN/gmail-eml"
+"$ROOT/scripts/install.sh" --bin-dir "$SYMLINK_BIN" --force >/dev/null
+test ! -L "$SYMLINK_BIN/gmail-eml"
+cmp -s "$ROOT/bin/gmail-eml" "$SYMLINK_BIN/gmail-eml"
+grep -q 'external custom tool' "$TMP/external-gmail-eml"
+symlink_backup="$(find "$SYMLINK_BIN" -maxdepth 1 -type l -name 'gmail-eml.bak.*' -print | head -1)"
+test -n "$symlink_backup"
+
+echo "PASS installer fail-closed / idempotent / force-backup / type-safe replacement"
