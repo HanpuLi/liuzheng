@@ -13,7 +13,8 @@
 set -uo pipefail
 
 SRC="${1:-}"; CASE="${2:-}"; NOTE="${3:-}"
-STAMP_BIN="${LIUZHENG_STAMP_BIN:-$HOME/bin/stamp}"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+STAMP_BIN="${LIUZHENG_STAMP_BIN:-$SCRIPT_DIR/stamp}"
 if [ "$SRC" = "--latest" ]; then
   SRC=$(find "$HOME/Downloads" -maxdepth 1 -name "*.html" -newermt "-120 seconds" 2>/dev/null         | xargs -I{} stat -f "%m %N" {} 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
   if [ -z "$SRC" ]; then

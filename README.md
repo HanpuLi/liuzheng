@@ -63,20 +63,22 @@
 
 ## 安装
 
-当前稳定版本是 **v0.1.0**。需要可复现安装时固定到 release tag：
+当前稳定版本是 **v0.1.1**。需要可复现安装时固定到 release tag：
 
 ```bash
-git clone --branch v0.1.0 --depth 1 https://github.com/HanpuLi/liuzheng.git
+git clone --branch v0.1.1 --depth 1 https://github.com/HanpuLi/liuzheng.git
 cd liuzheng
 
-# 1. skills（Claude Code 用户目录；Codex/Cursor 路径自行对应）
-cp -r skills/duiwai-goutong skills/luodang ~/.claude/skills/
+# 只安装四个 CLI 到 ~/bin；不会覆盖不同的已有文件
+./scripts/install.sh
 
-# 2. 命令行工具
-cp bin/* ~/bin/ && chmod +x ~/bin/gmail-eml ~/bin/stamp ~/bin/webarchive ~/bin/ots-upgrade-sweep.sh
+# 也安装两份 Claude Code skill
+./scripts/install.sh --with-claude-skills
 ```
 
-开发/审计最新代码再使用 `main`。依赖与配置见 [docs/install.md](docs/install.md)，版本变化见 [CHANGELOG.md](CHANGELOG.md)。
+installer 会先完整预检再写入：任何目标文件/skill 与当前版本不同都会整次拒绝，避免半安装；确实要替换时显式加 `--force`，旧文件会先留 UTC 时间戳备份。也可用 `--bin-dir` / `--skills-dir` 指定其他目录。
+
+开发/审计最新代码再使用 `main`。依赖、Gmail MCP、OTS 与定时任务配置见 [docs/install.md](docs/install.md)，版本变化见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 出处
 

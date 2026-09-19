@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "If you use liuzheng in research or evidence-preservation work, please cite this repository."
+title: "liuzheng: Evidence-preservation skills and CLI tools"
+type: software
+authors:
+  - family-names: Li
+    given-names: Hanpu
+repository-code: "https://github.com/HanpuLi/liuzheng"
+url: "https://github.com/HanpuLi/liuzheng"
+version: "0.1.1"
+date-released: "2026-09-19"
+license: MIT
